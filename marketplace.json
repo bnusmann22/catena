@@ -1,0 +1,102 @@
+{
+  "name": "Catena",
+  "slug": "catena-agri-supply",
+  "version": "1.0.0",
+  "logo": "logo.jpg",
+
+  "short_description": "USSD & Voice-powered agricultural supply chain platform — connects smallholder farmers to markets via any basic phone.",
+
+  "long_description": "Catena is a last-mile agricultural data capture and logistics platform built for Africa's smallholder farmers. Using USSD and automated Voice (IVR), farmers can register as suppliers, report harvests in real time, check daily commodity prices, and receive instant SMS and voice confirmations — all without a smartphone, mobile data, or internet connectivity.\n\nDesigned for cooperatives, agro-dealers, food processors, and logistics operators, Catena turns every basic feature phone into a secure supply chain terminal. It reduces post-harvest food loss by giving off-takers instant visibility into available produce, eliminates pricing exploitation through transparent benchmark rates, and creates verifiable digital transaction records that unlock rural credit and insurance.\n\nBuilt on Africa's Talking USSD, SMS, and Voice APIs.",
+
+  "at_products": ["USSD", "SMS", "Voice"],
+  "industries": ["Other"],
+  "industry_detail": "Agriculture & Food Supply Chain",
+
+  "container": {
+    "image": "ghcr.io/bnusmann22/catena:latest",
+    "port": 5000,
+    "healthcheck": "GET /"
+  },
+
+  "environment_variables": [
+    {
+      "key": "AT_USERNAME",
+      "label": "Africa's Talking Username",
+      "description": "Your Africa's Talking app username (use 'sandbox' for testing).",
+      "required": true,
+      "default": "sandbox",
+      "secret": false
+    },
+    {
+      "key": "AT_API_KEY",
+      "label": "Africa's Talking API Key",
+      "description": "Your Africa's Talking API key. Found in the AT dashboard under Settings > API Key.",
+      "required": true,
+      "default": "",
+      "secret": true
+    },
+    {
+      "key": "AT_PHONE_NUMBER",
+      "label": "Virtual Phone Number",
+      "description": "Your Africa's Talking virtual phone number for outbound voice confirmation calls (e.g. +254711XXXXXX). Optional — voice calls are skipped if unset.",
+      "required": false,
+      "default": "",
+      "secret": false
+    }
+  ],
+
+  "database": "none",
+
+  "webhooks": [
+    {
+      "path": "/ussd",
+      "method": "POST",
+      "at_product": "USSD",
+      "description": "Receives USSD session callbacks from Africa's Talking."
+    },
+    {
+      "path": "/voice",
+      "method": "POST",
+      "at_product": "Voice",
+      "description": "Receives inbound and outbound voice call callbacks from Africa's Talking."
+    }
+  ],
+
+  "pricing_plans": [
+    {
+      "name": "Free",
+      "slug": "free",
+      "currency": "USD",
+      "amount": 0,
+      "billing_frequency": "monthly",
+      "description": "Community tier — full USSD and Voice IVR functionality for up to 100 registered farmers. Ideal for small cooperatives and testing."
+    },
+    {
+      "name": "Growth",
+      "slug": "growth",
+      "currency": "USD",
+      "amount": 15,
+      "billing_frequency": "monthly",
+      "description": "For growing cooperatives and mid-size aggregators — unlimited farmer registrations, harvest reports, voice confirmations, and priority SMS delivery."
+    },
+    {
+      "name": "Enterprise",
+      "slug": "enterprise",
+      "currency": "USD",
+      "amount": 49,
+      "billing_frequency": "monthly",
+      "description": "For large-scale food processors and logistics operators — all Growth features plus dedicated support, custom commodity pricing feeds, and API access to harvest data for ERP integration."
+    }
+  ],
+
+  "terms_of_service_accepted": true,
+  "privacy_policy_accepted": true,
+
+  "author": {
+    "name": "Abdullahi Jamil Muhammad",
+    "github": "bnusmann22",
+    "email": ""
+  },
+
+  "repository": "https://github.com/bnusmann22/catena"
+}

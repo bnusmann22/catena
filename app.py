@@ -1,11 +1,11 @@
 """
-Catena — USSD data capture for farmers (Africa's Talking sandbox)
+Catena — USSD & Voice data capture for farmers (Africa's Talking sandbox)
 
 Run:
     pip install flask africastalking python-dotenv
     python app.py
-Then: ngrok http 5000  ->  paste the https URL + "/ussd" into
-the AT dashboard's USSD channel callback field.
+Then: ngrok http 5000  ->  paste the https URL + "/ussd" into the AT
+dashboard's USSD callback, and the URL + "/voice" into the Voice callback.
 """
 
 import os
@@ -24,10 +24,12 @@ AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")
 AT_API_KEY = os.environ.get("AT_API_KEY", "")
 
 sms = None
+voice = None
 if AT_API_KEY:
     import africastalking
     africastalking.initialize(AT_USERNAME, AT_API_KEY)
     sms = africastalking.SMS
+    voice = africastalking.Voice
 
 # ---------------------------------------------------------------------------
 # "Database" — in-memory. Pre-load a couple of fake farmers so the demo
@@ -63,11 +65,32 @@ def send_sms(phone: str, message: str):
         print(f"[SMS ERROR] {e}")
 
 
+def _voice_xml(body: str):
+    """Return a properly formatted Africa's Talking Voice API XML response."""
+    xml = f'<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n{body}\n</Response>'
+    return xml, 200, {"Content-Type": "application/xml"}
+
+
+def make_confirmation_call(phone: str, produce: str, qty_kg: int):
+    """Make an outbound voice call to confirm a harvest was logged.
+    Requires AT_PHONE_NUMBER (your Africa's Talking virtual number)."""
+    caller_id = os.environ.get("AT_PHONE_NUMBER", "")
+    if not voice or not caller_id:
+        print(f"[VOICE DISABLED — would call {phone}]: Harvest confirmed: {qty_kg}kg {produce}")
+        return
+    try:
+        voice.call(caller_id, [phone])
+        print(f"[VOICE CALL] Confirmation call initiated to {phone}")
+    except Exception as e:
+        print(f"[VOICE ERROR] {e}")
+
+
 @app.route("/", methods=["GET"])
 def index():
     return (
-        "Catena USSD Service is active!<br>"
+        "Catena USSD & Voice Service is active!<br>"
         "USSD Webhook Callback URL: <code>/ussd</code> (POST)<br>"
+        "Voice Webhook Callback URL: <code>/voice</code> (POST)<br>"
         "Debug State URL: <a href='/debug/state'>/debug/state</a> (GET)",
         200,
     )
@@ -143,8 +166,9 @@ def ussd():
                 phone,
                 f"Harvest logged: {qty_val}kg {produce}. You'll be notified when picked up.",
             )
+            make_confirmation_call(phone, produce, qty_val)
 
-            response = f"END Logged: {qty_val}kg {produce}. Confirmation SMS sent."
+            response = f"END Logged: {qty_val}kg {produce}. Confirmation sent."
         else:
             response = "END Invalid input."
 
@@ -172,6 +196,109 @@ def ussd():
 
 def _reply(response: str):
     return response, 200, {"Content-Type": "text/plain"}
+
+
+# ---------------------------------------------------------------------------
+# Voice API endpoints  (set callback URL to <ngrok>/voice in AT dashboard)
+# ---------------------------------------------------------------------------
+
+@app.route("/voice", methods=["POST"])
+def voice_callback():
+    """Main voice callback — handles inbound IVR calls and outbound confirmations."""
+    is_active = request.values.get("isActive")
+    direction = request.values.get("direction", "")
+
+    # Call ended
+    if is_active == "0":
+        return _voice_xml("")
+
+    # --- Outbound call: harvest confirmation callback ---
+    if direction == "Outbound":
+        phone = request.values.get("destinationNumber", "")
+        caller_harvests = [r for r in harvest_reports if r["phone"] == phone]
+        if caller_harvests:
+            latest = caller_harvests[-1]
+            return _voice_xml(
+                f'<Say>Hello, this is Catena. '
+                f'Your harvest of {latest["qty_kg"]} kilograms of {latest["produce"]} '
+                f'has been successfully recorded. '
+                f'You will be notified when pickup is scheduled. '
+                f'Thank you. Goodbye.</Say>'
+            )
+        return _voice_xml(
+            '<Say>Hello, this is Catena. '
+            'Your harvest has been recorded. Thank you. Goodbye.</Say>'
+        )
+
+    # --- Inbound call: IVR price query + harvest status ---
+    base = request.url_root.rstrip("/")
+    return _voice_xml(
+        f'<GetDigits timeout="30" finishOnKey="#" callbackUrl="{base}/voice/menu" numDigits="1">'
+        '<Say>Welcome to Catena Agricultural Services. '
+        'Press 1 to check commodity prices. '
+        'Press 2 to hear your latest harvest report. '
+        'Press hash when done.</Say>'
+        '</GetDigits>'
+        '<Say>We did not receive your input. Goodbye.</Say>'
+    )
+
+
+@app.route("/voice/menu", methods=["POST"])
+def voice_menu():
+    """Route the caller based on their main-menu DTMF selection."""
+    digits = request.values.get("dtmfDigits", "")
+    base = request.url_root.rstrip("/")
+
+    # --- Option 1: commodity price list ---
+    if digits == "1":
+        items = " ".join(
+            f"Press {i + 1} for {p.title()}." for i, p in enumerate(PRICES)
+        )
+        return _voice_xml(
+            f'<GetDigits timeout="30" finishOnKey="#" callbackUrl="{base}/voice/price-result" numDigits="1">'
+            f'<Say>{items}</Say>'
+            '</GetDigits>'
+            '<Say>No input received. Goodbye.</Say>'
+        )
+
+    # --- Option 2: latest harvest report ---
+    if digits == "2":
+        phone = request.values.get("callerNumber", "")
+        caller_harvests = [r for r in harvest_reports if r["phone"] == phone]
+        if caller_harvests:
+            latest = caller_harvests[-1]
+            return _voice_xml(
+                f'<Say>Your latest harvest report is '
+                f'{latest["qty_kg"]} kilograms of {latest["produce"]}, '
+                f'logged on {latest["ts"]}. '
+                f'Thank you for using Catena. Goodbye.</Say>'
+            )
+        return _voice_xml(
+            '<Say>No harvest reports found for your number. '
+            'Please log a harvest via U S S D first. Goodbye.</Say>'
+        )
+
+    return _voice_xml('<Say>Invalid selection. Goodbye.</Say>')
+
+
+@app.route("/voice/price-result", methods=["POST"])
+def voice_price_result():
+    """Read back the selected commodity price via voice."""
+    digits = request.values.get("dtmfDigits", "")
+    keys = list(PRICES.keys())
+
+    try:
+        idx = int(digits) - 1
+        if idx < 0:
+            raise IndexError
+        produce = keys[idx]
+        price = PRICES[produce]
+        return _voice_xml(
+            f'<Say>{produce.title()} is currently {price} Naira per kilogram. '
+            f'Thank you for using Catena. Goodbye.</Say>'
+        )
+    except (ValueError, IndexError):
+        return _voice_xml('<Say>Invalid selection. Goodbye.</Say>')
 
 
 @app.route("/debug/state", methods=["GET"])
